@@ -565,7 +565,7 @@
             <span id="reader-date-time">mié, 28 oct, 17:58</span>
             <button class="p-1.5 hover:bg-gray-100 rounded-full"><i class="fa-solid fa-star text-gray-300"></i></button>
             <button class="p-1.5 hover:bg-gray-100 rounded-full"><i class="fa-regular fa-face-smile"></i></button>
-            <button class="p-1.5 hover:bg-gray-100 rounded-full"><i class="fa-solid fa-reply"></i></button>
+            <button onclick="replyToCurrentEmail()" title="Responder" class="p-1.5 hover:bg-gray-100 rounded-full"><i class="fa-solid fa-reply"></i></button>
             <button class="p-1.5 hover:bg-gray-100 rounded-full"><i class="fa-solid fa-ellipsis-vertical"></i></button>
           </div>
         </div>
@@ -577,7 +577,7 @@
             <i class="fa-solid fa-reply"></i>
             <span>Responder</span>
           </button>
-          <button class="px-5 py-2 border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-full flex items-center gap-2 transition">
+          <button onclick="replyAllToCurrentEmail()" class="px-5 py-2 border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-full flex items-center gap-2 transition">
             <i class="fa-solid fa-reply-all"></i>
             <span>Responder a todos</span>
           </button>
@@ -658,6 +658,15 @@
       <!-- Subject Row -->
       <div class="px-4 py-1.5 border-b border-gray-100">
         <input type="text" id="compose-subject" placeholder="Asunto" class="w-full outline-none text-gray-800 py-1 font-medium bg-transparent text-sm">
+      </div>
+
+      <!-- Botón de sugerencias (solo al responder) -->
+      <div id="suggest-bar" class="hidden px-4 pt-2 flex justify-end shrink-0">
+        <button id="suggest-btn" type="button" onmousedown="event.preventDefault()" onclick="toggleSugerencias(event)" class="inline-flex items-center gap-1.5 text-xs font-medium text-gmail-blue bg-gmail-activeBg hover:bg-[#c2d7fa] px-3 py-1.5 rounded-full transition" title="Insertar un texto rápido en la respuesta">
+          <i class="fa-regular fa-lightbulb"></i>
+          <span>Sugerencias</span>
+          <i class="fa-solid fa-caret-down text-[10px]"></i>
+        </button>
       </div>
 
       <!-- Body / Signature Content Editable -->
@@ -2301,10 +2310,38 @@ const _chip = addRecipientChip;
 window.addRecipientChip = function (t, v) {
   if (typeof v === 'string' && v.includes(',')) v.split(',').map(s => s.trim()).filter(Boolean).forEach(s => _chip(t, s)); else _chip(t, v);
 };
-window.replyToCurrentEmail = function () {
+/* ---- Responder / Responder a todos (con el hilo citado) ---- */
+function listaCorreos(t) { return String(t || '').split(/[,;]/).map(x => x.trim()).filter(x => x.includes('@')); }
+function correoDe(e) {
+  if (e.senderEmail) return e.senderEmail;
+  const c = mockContacts.find(k => k.name === e.sender);
+  return c ? c.email : (String(e.sender).includes('@') ? e.sender : '');
+}
+function armarRespuesta(todos) {
   const e = mockEmails.find(m => m.id === activeEmailId);
-  if (e) openComposeModal({ to: e.senderEmail || e.sender, subject: 'Re: ' + e.subject, bodyContent: '<br><br>------------------<br>De: ' + e.sender + '<br>Asunto: ' + e.subject });
-};
+  if (!e) return;
+  const yo = (currentUser.email || '').toLowerCase();
+  const remitente = correoDe(e);
+  const mio = !!remitente && remitente.toLowerCase() === yo; // si yo lo envié, respondo a sus destinatarios
+  const para = mio ? listaCorreos(e.to) : [remitente || e.sender];
+  const vistos = new Set(para.map(x => x.toLowerCase()));
+  const cc = (todos ? listaCorreos(e.to).concat(listaCorreos(e.cc)) : []).filter(x => {
+    const k = x.toLowerCase();
+    if (k === yo || vistos.has(k)) return false;
+    vistos.add(k); return true;
+  });
+  const f = new Date(e.fecha);
+  const cuando = isNaN(f) ? (e.date || '') : f.toLocaleString('es-PE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const quien = esc(e.sender) + (remitente ? ' &lt;' + esc(remitente) + '&gt;' : '');
+  const cuerpo = '<p><br></p><div class="gmail_quote"><p style="color:#5f6368;font-size:12px;margin:12px 0 4px">El ' + esc(cuando) + ', ' + quien + ' escribió:</p>'
+    + '<blockquote style="margin:0 0 0 .5ex;padding-left:1ex;border-left:2px solid #ccc;color:#555">' + (e.bodyContent || '<p>' + esc(e.snippet || '') + '</p>') + '</blockquote></div>';
+  openComposeModal({ id: '', to: para.join(', '), cc: cc.join(', '), subject: /^re:/i.test(e.subject) ? e.subject : 'Re: ' + e.subject, bodyContent: cuerpo });
+  if (cc.length) document.getElementById('cc-row').classList.remove('hidden');
+  const cb = document.getElementById('compose-body');
+  setTimeout(() => { cb.focus(); const r = document.createRange(); r.setStart(cb, 0); r.collapse(true); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }, 60);
+}
+window.replyToCurrentEmail = function () { armarRespuesta(false); };
+window.replyAllToCurrentEmail = function () { armarRespuesta(true); };
 
 /* ---- Leído, destacado, archivar, eliminar: se detectan solos ---- */
 async function empujar() {
@@ -2381,6 +2418,80 @@ window.saveProfileChanges = async function () {
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !box().classList.contains('hidden')) { e.stopImmediatePropagation(); closeLightbox(); }
   }, true);
+})();
+</script>
+
+  <!-- Menú de sugerencias de respuesta -->
+  <div id="suggest-menu" class="hidden fixed z-[70] w-72 max-w-[calc(100vw-24px)] bg-white border border-gray-200 shadow-xl rounded-xl py-1.5 select-none"></div>
+
+<script>
+/* ===== Sugerencias de texto para RESPONDER (no aparecen al redactar un correo nuevo) ===== */
+const SUGERENCIAS_RESPUESTA = [            // <- edita aquí los textos
+  'Ya tiene pase',
+  'Depósito confirmado, generar anticipos.',
+  'Depósito está a nombre de: '
+];
+
+(function () {
+  const bar  = document.getElementById('suggest-bar');
+  const btn  = document.getElementById('suggest-btn');
+  const menu = document.getElementById('suggest-menu');
+
+  SUGERENCIAS_RESPUESTA.forEach(function (txt) {
+    const it = document.createElement('button');
+    it.type = 'button';
+    it.className = 'w-full text-left text-sm text-gray-800 hover:bg-gmail-hoverBg px-4 py-2 transition';
+    it.textContent = txt.trim();
+    it.onmousedown = function (e) { e.preventDefault(); };      // no le quita el cursor al cuerpo del correo
+    it.onclick = function () { cerrarMenu(); insertarSugerencia(txt); };
+    menu.appendChild(it);
+  });
+
+  function cerrarMenu() { menu.classList.add('hidden'); }
+
+  window.toggleSugerencias = function (e) {
+    e.stopPropagation();
+    if (!menu.classList.contains('hidden')) { cerrarMenu(); return; }
+    menu.classList.remove('hidden');
+    const r = btn.getBoundingClientRect(), h = menu.offsetHeight;
+    const abajo = window.innerHeight - r.bottom - 8 >= h;       // si no cabe abajo, se abre hacia arriba
+    menu.style.top   = (abajo ? r.bottom + 4 : Math.max(8, r.top - h - 4)) + 'px';
+    menu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    menu.style.left  = 'auto';
+  };
+
+  document.addEventListener('click', function (e) { if (!menu.contains(e.target)) cerrarMenu(); });
+
+  function insertarSugerencia(texto) {
+    const body = document.getElementById('compose-body');
+    const quote = body.querySelector('.gmail_quote');           // el hilo citado
+    body.focus();
+    let r = null;
+    if (typeof lastComposeRange !== 'undefined' && lastComposeRange && body.contains(lastComposeRange.startContainer)) {
+      r = lastComposeRange.cloneRange();                        // donde estaba el cursor
+    }
+    if (!r || (quote && quote.contains(r.startContainer))) {    // sin cursor, o dentro de la cita: va arriba de la cita
+      r = document.createRange();
+      const primero = body.firstElementChild;
+      if (primero && primero !== quote) { r.selectNodeContents(primero); r.collapse(true); }
+      else if (quote) { r.setStartBefore(quote); r.collapse(true); }
+      else { r.selectNodeContents(body); r.collapse(true); }
+    }
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    document.execCommand('insertText', false, texto);
+  }
+
+  function mostrar(si) { bar.classList.toggle('hidden', !si); cerrarMenu(); }
+
+  // Solo se muestra cuando el mensaje es una respuesta ("Re: ..."); en "Redactar" queda oculto.
+  const _abrirRedactor = window.openComposeModal;
+  window.openComposeModal = function (draft) {
+    const res = _abrirRedactor.apply(this, arguments);
+    mostrar(!!draft && /^\s*re:/i.test(draft.subject || ''));
+    return res;
+  };
 })();
 </script>
 
