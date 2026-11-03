@@ -2495,5 +2495,112 @@ const SUGERENCIAS_RESPUESTA = [            // <- edita aquí los textos
 })();
 </script>
 
+<!-- Nodos para redimensionar imágenes en el redactor -->
+<style>
+  #img-resizer { position: fixed; z-index: 65; display: none; pointer-events: none; border: 2px solid #0b57d0; box-sizing: border-box; }
+  #img-resizer .rz-h { position: absolute; width: 10px; height: 10px; background: #fff; border: 2px solid #0b57d0; border-radius: 2px; pointer-events: auto; box-sizing: border-box; }
+  #img-resizer .rz-h[data-d="nw"] { left: -6px; top: -6px; cursor: nwse-resize; }
+  #img-resizer .rz-h[data-d="n"]  { left: calc(50% - 5px); top: -6px; cursor: ns-resize; }
+  #img-resizer .rz-h[data-d="ne"] { right: -6px; top: -6px; cursor: nesw-resize; }
+  #img-resizer .rz-h[data-d="e"]  { right: -6px; top: calc(50% - 5px); cursor: ew-resize; }
+  #img-resizer .rz-h[data-d="se"] { right: -6px; bottom: -6px; cursor: nwse-resize; }
+  #img-resizer .rz-h[data-d="s"]  { left: calc(50% - 5px); bottom: -6px; cursor: ns-resize; }
+  #img-resizer .rz-h[data-d="sw"] { left: -6px; bottom: -6px; cursor: nesw-resize; }
+  #img-resizer .rz-h[data-d="w"]  { left: -6px; top: calc(50% - 5px); cursor: ew-resize; }
+  #img-resizer .rz-tag { position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%); background: #1f1f1f; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 6px; white-space: nowrap; display: none; }
+  #compose-body img.rz-selected { outline: none; }
+</style>
+<div id="img-resizer">
+  <div class="rz-h" data-d="nw"></div><div class="rz-h" data-d="n"></div><div class="rz-h" data-d="ne"></div>
+  <div class="rz-h" data-d="e"></div><div class="rz-h" data-d="se"></div><div class="rz-h" data-d="s"></div>
+  <div class="rz-h" data-d="sw"></div><div class="rz-h" data-d="w"></div>
+  <div class="rz-tag"></div>
+</div>
+<script>
+/* ===== Redimensionar imágenes del redactor con nodos (mantiene la proporción) ===== */
+(function () {
+  const body = document.getElementById('compose-body');
+  const box = document.getElementById('img-resizer');
+  const tag = box.querySelector('.rz-tag');
+  let img = null, drag = null;
+
+  function posicionar() {
+    if (!img || !document.body.contains(img) || !body.contains(img)) return ocultar();
+    const m = document.getElementById('compose-modal');
+    if (m.classList.contains('translate-y-full')) return ocultar();
+    const r = img.getBoundingClientRect(), b = body.getBoundingClientRect();
+    if (r.bottom < b.top || r.top > b.bottom) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+    box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
+    // recorta marco y nodos al área visible del cuerpo del mensaje (no se dibujan sobre Para/Asunto)
+    const out = 14, t = r.top < b.top ? b.top - r.top : -out, bt = r.bottom > b.bottom ? r.bottom - b.bottom : -out - 20,
+          l = r.left < b.left ? b.left - r.left : -out, rt = r.right > b.right ? r.right - b.right : -out;
+    box.style.clipPath = 'inset(' + t + 'px ' + rt + 'px ' + bt + 'px ' + l + 'px)';
+  }
+  function seleccionar(el) {
+    if (img) img.classList.remove('rz-selected');
+    img = el; img.classList.add('rz-selected');
+    posicionar();
+  }
+  function ocultar() {
+    if (img) img.classList.remove('rz-selected');
+    img = null; drag = null; box.style.display = 'none'; tag.style.display = 'none';
+  }
+
+  body.addEventListener('click', e => {
+    if (e.target.tagName === 'IMG') {
+      seleccionar(e.target);
+      const r = document.createRange(); r.selectNode(e.target);      // así Supr/Retroceso la borra
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    } else ocultar();
+  });
+  // al insertar/pegar una imagen, queda seleccionada con sus nodos
+  new MutationObserver(muts => {
+    if (drag) return;
+    for (const m of muts) for (const n of m.addedNodes) {
+      const el = n.nodeType === 1 ? (n.tagName === 'IMG' ? n : n.querySelector && n.querySelector('img')) : null;
+      if (el) { if (el.complete) seleccionar(el); else el.addEventListener('load', () => seleccionar(el), { once: true }); return; }
+    }
+    if (img) posicionar();
+  }).observe(body, { childList: true, subtree: true });
+  body.addEventListener('input', () => { if (img && !body.contains(img)) ocultar(); else posicionar(); });
+  body.addEventListener('scroll', posicionar);
+  window.addEventListener('resize', posicionar);
+  document.addEventListener('scroll', posicionar, true);
+  body.addEventListener('keydown', e => { if (e.key === 'Escape') ocultar(); });
+  setInterval(() => { if (img) posicionar(); }, 300); // por si el redactor se minimiza, cierra o se mueve
+
+  box.querySelectorAll('.rz-h').forEach(h => {
+    h.addEventListener('mousedown', e => {
+      if (!img) return;
+      e.preventDefault(); e.stopPropagation();
+      const r = img.getBoundingClientRect();
+      drag = { d: h.dataset.d, x: e.clientX, y: e.clientY, w: r.width, h: r.height };
+      tag.style.display = 'block';
+    });
+  });
+  window.addEventListener('mousemove', e => {
+    if (!drag || !img) return;
+    const d = drag.d, dx = e.clientX - drag.x, dy = e.clientY - drag.y, ratio = drag.w / drag.h;
+    let w = drag.w;
+    if (d.includes('e')) w = drag.w + dx;
+    else if (d.includes('w')) w = drag.w - dx;
+    else w = (d === 's' ? drag.h + dy : drag.h - dy) * ratio;       // nodos superior/inferior
+    if (d.length === 2) {                                           // esquinas: sigue el movimiento mayor
+      const wy = (d.includes('s') ? drag.h + dy : drag.h - dy) * ratio;
+      if (Math.abs(wy - drag.w) > Math.abs(w - drag.w)) w = wy;
+    }
+    const max = body.clientWidth - 32;
+    w = Math.max(30, Math.min(w, max));
+    img.style.width = Math.round(w) + 'px'; img.style.height = 'auto';
+    img.removeAttribute('width'); img.removeAttribute('height');
+    posicionar();
+    tag.textContent = Math.round(w) + ' × ' + Math.round(w / ratio) + ' px';
+  });
+  window.addEventListener('mouseup', () => { if (drag) { drag = null; tag.style.display = 'none'; posicionar(); } });
+})();
+</script>
+
 </body>
 </html>
